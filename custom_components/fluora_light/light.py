@@ -1,7 +1,7 @@
 from typing import Any
 
-from homeassistant.components.light import (ATTR_BRIGHTNESS, PLATFORM_SCHEMA,
-                                            LightEntity, LightEntityFeature, LightEntityDescription, SUPPORT_BRIGHTNESS, SUPPORT_COLOR, SUPPORT_EFFECT, ATTR_EFFECT, ColorMode)
+from homeassistant.components.light import (ATTR_BRIGHTNESS,
+                                            LightEntity, LightEntityFeature, LightEntityDescription, ATTR_EFFECT, ColorMode)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant import config_entries

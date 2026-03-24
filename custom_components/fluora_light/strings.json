@@ -2,7 +2,7 @@
   "title": "Fluora Light",
   "config": {
     "step": {
-      "init": {
+      "user": {
         "title": "Fluora Light",
         "data": {
           "name": "Name of Your Light",

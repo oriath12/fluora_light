@@ -79,33 +79,41 @@ class LightCoordinator(DataUpdateCoordinator):
             if self._fast_poll_count > 1:
                 self._set_poll_mode(fast=False)
 
-    async def _disconnect(self):
-        await self.light_socket.close()
+    def _disconnect(self):
+        if self.light_socket:
+            self.light_socket.close()
 
     async def async_update(self):
         if not self._initialized:
             await self._initialize()
         return self.data
 
+    def _setup_socket(self):
+        """Set up the UDP socket (runs in executor)."""
+        self.ip_address = socket.gethostbyname(self.hostname)
+        self.light_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.light_socket.settimeout(5)
+        self.light_socket.connect((self.ip_address, self.port))
+
+    async def _send_hex(self, hex_str):
+        """Send a hex command to the light without blocking the event loop."""
+        await self.hass.async_add_executor_job(
+            self.light_socket.send, bytearray.fromhex(hex_str)
+        )
+
     async def _initialize(self):
         try:
-            # resolve the ip address from the hostname if possible
-            self.ip_address = socket.gethostbyname(self.hostname)
-
-            # setup and connect the socket for communication with the light
-            self.light_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.light_socket.settimeout(5)
-            self.light_socket.connect((self.ip_address, self.port))
-            self.light_socket.settimeout(None)
+            # resolve hostname and set up socket in executor to avoid blocking
+            await self.hass.async_add_executor_job(self._setup_socket)
             self._initialized = True
 
             # set mode to auto when initializing
-            self.light_socket.send(bytearray.fromhex(AUTO_HEX))
-            self.state[LightState.EFFECT] = EFFECT_AUTO
+            await self._send_hex(AUTO_HEX)
+            self.data[LightState.EFFECT] = EFFECT_AUTO
 
             LOGGER.info("async_update_state: %s - %s", LightState.EFFECT, EFFECT_AUTO)
 
-            self.async_set_updated_data(self.state)
+            self.async_set_updated_data(self.data)
             self._set_poll_mode(fast=True)
 
             reg = device_registry.async_get(self.hass)
@@ -144,39 +152,39 @@ class LightCoordinator(DataUpdateCoordinator):
             # convert brightness from HA's 0-255 interpretation to our 0-100
             desired_brightness = round(value * 100 / 255)
             brightness_hex = calculate_brightness_hex(desired_brightness)
-            self.light_socket.send(bytearray.fromhex(BRIGHTNESS_HEX_FIRST + hex(int(brightness_hex))[2:] + BRIGHTNESS_HEX_LAST))
+            await self._send_hex(BRIGHTNESS_HEX_FIRST + hex(int(brightness_hex))[2:] + BRIGHTNESS_HEX_LAST)
             LOGGER.info(f"Setting Brightness {desired_brightness}")
         # compiled all color, scene, and mode changing into the EFFECT to make it easier
         elif key == LightState.EFFECT:
             # check if it is a scene effect. If so, set the mode to scene and then set the specific scene
             if value in SCENE_EFFECTS:
-                self.light_socket.send(bytearray.fromhex(SCENE_HEX))
+                await self._send_hex(SCENE_HEX)
                 await asyncio.sleep(0.1)
-                self.light_socket.send(bytearray.fromhex(SCENE_HEX_DICT[value]))
+                await self._send_hex(SCENE_HEX_DICT[value])
                 LOGGER.info(f"Setting SCENE: {value}")
             # check if it is 'auto' effect, and then change to auto mode
             elif value == EFFECT_AUTO:
-                self.light_socket.send(bytearray.fromhex(AUTO_HEX))
+                await self._send_hex(AUTO_HEX)
                 LOGGER.info(f"Setting MODE: {value}")
             # if "White" is chosen, we need to set the saturation to 0, but don't need to change colors, also set to manual mode
             elif value == EFFECT_WHITE:
-                self.light_socket.send(bytearray.fromhex(MANUAL_HEX))
+                await self._send_hex(MANUAL_HEX)
                 await asyncio.sleep(0.1)
-                self.light_socket.send(bytearray.fromhex(MIN_SATURATION_HEX))
+                await self._send_hex(MIN_SATURATION_HEX)
                 LOGGER.info(f"Setting light to white")
             # finally check for color effects, where we need to set manual mode, set saturation to 100 and then set color
             elif value in COLOR_EFFECTS:
-                self.light_socket.send(bytearray.fromhex(MANUAL_HEX))
+                await self._send_hex(MANUAL_HEX)
                 await asyncio.sleep(0.1)
-                self.light_socket.send(bytearray.fromhex(MAX_SATURATION_HEX))
+                await self._send_hex(MAX_SATURATION_HEX)
                 await asyncio.sleep(0.1)
-                self.light_socket.send(bytearray.fromhex(SCENE_HEX_DICT[value]))
+                await self._send_hex(SCENE_HEX_DICT[value])
                 LOGGER.info(f"Setting color: {value}")
         elif key == LightState.POWER:
             if value:
-                self.light_socket.send(bytearray.fromhex(POWER_ON_HEX))
+                await self._send_hex(POWER_ON_HEX)
             else:
-                self.light_socket.send(bytearray.fromhex(POWER_OFF_HEX))
+                await self._send_hex(POWER_OFF_HEX)
         else:
             return False
 
