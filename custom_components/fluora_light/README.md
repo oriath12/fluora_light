@@ -125,7 +125,7 @@ The hex command strings are hardcoded in `const.py`. If Fluora releases a firmwa
 
 ## Project Structure
 
-\```
+
 custom_components/fluora_light/
 ├── __init__.py        # Entry setup/unload
 ├── config_flow.py     # UI-based configuration
@@ -137,7 +137,6 @@ custom_components/fluora_light/
 ├── strings.json       # Config flow UI strings
 └── translations/
     └── en.json        # English translations
-\```
 
 ## License
 
