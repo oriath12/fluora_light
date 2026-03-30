@@ -38,12 +38,48 @@ Brightness is controlled via Home Assistant's standard brightness slider (0-255)
 
 The integration exposes the following effects through Home Assistant's effect picker:
 
-| Effect | Type | Description |
-|--------|------|-------------|
-| Auto | Mode | Sets the light to automatic mode |
-| White | Color | Full white (minimum saturation) |
-| Red, Orange, Green, Blue, Purple, Yellow | Color | Solid color at full saturation |
-| Party, Chill, Focus, Bedtime, Awaken | Scene | Built-in animated scene presets |
+|
+ Effect 
+|
+ Type 
+|
+ Description 
+|
+|
+--------
+|
+------
+|
+-------------
+|
+|
+ Auto 
+|
+ Mode 
+|
+ Sets the light to automatic mode 
+|
+|
+ White 
+|
+ Color 
+|
+ Full white (minimum saturation) 
+|
+|
+ Red, Orange, Green, Blue, Purple, Yellow 
+|
+ Color 
+|
+ Solid color at full saturation 
+|
+|
+ Party, Chill, Focus, Bedtime, Awaken 
+|
+ Scene 
+|
+ Built-in animated scene presets 
+|
 
 ### Power
 
@@ -127,16 +163,17 @@ The hex command strings are hardcoded in `const.py`. If Fluora releases a firmwa
 
 
 custom_components/fluora_light/
-├── __init__.py        # Entry setup/unload
-├── config_flow.py     # UI-based configuration
-├── const.py           # All constants, hex commands, effect lists
-├── coordinator.py     # DataUpdateCoordinator — socket management & command sending
-├── entity.py          # Base entity class
-├── light.py           # LightEntity implementation
-├── manifest.json      # HACS/HA metadata
-├── strings.json       # Config flow UI strings
+├── init.py # Entry setup/unload
+├── config_flow.py # UI-based configuration
+├── const.py # All constants, hex commands, effect lists
+├── coordinator.py # DataUpdateCoordinator — socket management & command sending
+├── entity.py # Base entity class
+├── light.py # LightEntity implementation
+├── manifest.json # HACS/HA metadata
+├── strings.json # Config flow UI strings
 └── translations/
-    └── en.json        # English translations
+└── en.json # English translations
+
 
 ## License
 
