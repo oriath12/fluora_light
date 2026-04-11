@@ -1,19 +1,30 @@
 {
   "title": "Fluora Light",
   "config": {
+    "flow_title": "{name}",
     "step": {
       "user": {
         "title": "Fluora Light",
+        "description": "Manually add a Fluora device by IP/hostname. If auto-discovery found your device, it should appear as a separate notification.",
         "data": {
-          "name": "Name of Your Light",
-          "hostname": "Hostname of your light (result of ~arp -a~)",
-          "port": "Port for the light, default 6767"
+          "name": "Name",
+          "hostname": "Hostname or IP",
+          "port": "Port (default 6767)"
+        }
+      },
+      "discovery_confirm": {
+        "title": "Fluora discovered",
+        "description": "A Fluora light was discovered on your network at {host}. Add it to Home Assistant?",
+        "data": {
+          "name": "Name"
         }
       }
     },
     "error": {
+      "cannot_connect": "Unable to reach that host on the network. Check the IP/hostname and that the Fluora is powered on and connected to Wi-Fi."
     },
     "abort": {
+      "already_configured": "This Fluora is already configured."
     }
   }
 }
