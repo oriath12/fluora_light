@@ -7,7 +7,6 @@ from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_EFFECT
 )
-from homeassistant.helpers import device_registry, event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import *
@@ -18,6 +17,10 @@ def scale_number(value, old_min, old_max, new_min, new_max):
 
 
 def calculate_brightness_hex(desired_brightness):
+    # clamp to [1, 100] so we never produce a value below the device's
+    # documented minimum (HA brightness 1-2 would otherwise round to 0
+    # and yield an out-of-range hex command).
+    desired_brightness = max(1, min(100, desired_brightness))
     return scale_number((desired_brightness ** 0.1) - 1, 0, 100 ** 0.1 - 1, 3932160, 4160442)
 
 
@@ -35,24 +38,23 @@ class LightCoordinator(DataUpdateCoordinator):
     _normal_poll_interval = 60
     _fast_poll_interval = 10
     _initialized = False
-    _request_status_update = True
-    _unsub_update_state: event.CALLBACK_TYPE | None = None
-    _concurent_update_state = 0
 
     def __init__(self, hass, device_id, conf):
-        self.name = conf[CONF_NAME]
-        self.device_name = self.name
+        # Keep the user-provided friendly name separate from the
+        # DataUpdateCoordinator's `name` (which we prefix for logs).
+        self.display_name = conf[CONF_NAME]
         self.device_id = device_id
         self.hostname = conf[CONF_HOSTNAME]
         self.port = conf[CONF_PORT]
         self._normal_poll_interval = 300
         self._fast_poll_interval = 5
+        self._init_lock = asyncio.Lock()
 
         """Initialize coordinator parent"""
         super().__init__(
             hass,
             LOGGER,
-            name="Fluora Light: " + self.name,
+            name="Fluora Light: " + self.display_name,
             # let's give at least 30 seconds for initial connect to device
             update_interval=dt.timedelta(seconds=30),
             update_method=self.async_update,
@@ -79,9 +81,15 @@ class LightCoordinator(DataUpdateCoordinator):
             if self._fast_poll_count > 1:
                 self._set_poll_mode(fast=False)
 
-    def _disconnect(self):
-        if self.light_socket:
-            self.light_socket.close()
+    def close(self):
+        """Close the UDP socket. Called on unload."""
+        if self.light_socket is not None:
+            try:
+                self.light_socket.close()
+            except OSError:
+                pass
+            self.light_socket = None
+        self._initialized = False
 
     async def async_update(self):
         if not self._initialized:
@@ -91,40 +99,51 @@ class LightCoordinator(DataUpdateCoordinator):
     def _setup_socket(self):
         """Set up the UDP socket (runs in executor)."""
         self.ip_address = socket.gethostbyname(self.hostname)
-        self.light_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.light_socket.settimeout(5)
-        self.light_socket.connect((self.ip_address, self.port))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(5)
+        sock.connect((self.ip_address, self.port))
+        self.light_socket = sock
 
     async def _send_hex(self, hex_str):
         """Send a hex command to the light without blocking the event loop."""
+        if self.light_socket is None:
+            LOGGER.debug("Skipping send: socket not initialized")
+            return
         await self.hass.async_add_executor_job(
             self.light_socket.send, bytearray.fromhex(hex_str)
         )
 
     async def _initialize(self):
-        try:
-            # resolve hostname and set up socket in executor to avoid blocking
-            await self.hass.async_add_executor_job(self._setup_socket)
-            self._initialized = True
+        # Guard against concurrent initialization (scheduled refresh +
+        # user action can both call this).
+        async with self._init_lock:
+            if self._initialized:
+                return
+            try:
+                # resolve hostname and set up socket in executor to avoid blocking
+                await self.hass.async_add_executor_job(self._setup_socket)
 
-            # set mode to auto when initializing
-            await self._send_hex(AUTO_HEX)
-            self.data[LightState.EFFECT] = EFFECT_AUTO
+                # set mode to auto when initializing
+                await self._send_hex(AUTO_HEX)
+                self.data[LightState.EFFECT] = EFFECT_AUTO
+                self._initialized = True
 
-            LOGGER.info("async_update_state: %s - %s", LightState.EFFECT, EFFECT_AUTO)
+                LOGGER.info(
+                    "async_update_state: %s - %s", LightState.EFFECT, EFFECT_AUTO
+                )
 
-            self.async_set_updated_data(self.data)
-            self._set_poll_mode(fast=True)
-
-            reg = device_registry.async_get(self.hass)
-            reg.async_update_device(
-                self.hostname,
-                name=self.name,
-                manufacturer="Fluora",
-                hw_version="1",
-            )
-        except Exception as e:
-            LOGGER.warning("Failed to initialize %s: %s", self.ip_address, str(e))
+                self._set_poll_mode(fast=True)
+            except Exception as e:
+                # Make sure we don't leak a half-set-up socket on failure.
+                if self.light_socket is not None:
+                    try:
+                        self.light_socket.close()
+                    except OSError:
+                        pass
+                    self.light_socket = None
+                LOGGER.warning(
+                    "Failed to initialize %s: %s", self.hostname, str(e)
+                )
 
     @property
     def state(self) -> dict:
@@ -133,19 +152,13 @@ class LightCoordinator(DataUpdateCoordinator):
     async def async_update_state(self, key: LightState, value) -> bool:
         return await self._async_update_state(key, value)
 
-    async def _async_update_state_debounced(self, date, key: LightState, value) -> bool:
-        self._unsub_update_state = None
-        self._concurent_update_state = 0
-        LOGGER.debug(
-            "_async_update_state_debounced date:%s, %s - %s", date, key, value
-        )
-        return await self._async_update_state(key, value)
-
     async def _async_update_state(self, key: LightState, value) -> bool:
-        self._request_status_update = True
-
         if not self._initialized:
             await self._initialize()
+
+        if not self._initialized:
+            # initialization failed; nothing to send.
+            return False
 
         # Write data back
         if key == LightState.BRIGHTNESS:

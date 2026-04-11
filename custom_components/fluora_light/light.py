@@ -32,11 +32,15 @@ class FluoraLightEntity(FluoraLightBaseEntity, LightEntity):
     _attr_color_mode = ColorMode.BRIGHTNESS
     _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
     _attr_supported_features = LightEntityFeature.EFFECT
+    _attr_effect_list = EFFECT_LIST
+    # With has_entity_name=True, name=None tells HA to use the device
+    # name alone (no per-entity suffix), which matches the "1 light per
+    # device" model of this integration.
+    _attr_name = None
+
     def __init__(self, coordinator: LightCoordinator, description: LightEntityDescription) -> None:
         """Initialize a FluoraLight."""
         super().__init__(coordinator, description)
-        self.coordinator = coordinator
-        self._attr_effect_list = EFFECT_LIST
 
     @property
     def brightness(self):
