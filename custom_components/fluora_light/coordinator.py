@@ -75,12 +75,6 @@ class LightCoordinator(DataUpdateCoordinator):
         self.update_interval = dt.timedelta(seconds=interval)
         self._schedule_refresh()
 
-    def _update_poll(self):
-        if self._fast_poll_count > -1:
-            self._fast_poll_count += 1
-            if self._fast_poll_count > 1:
-                self._set_poll_mode(fast=False)
-
     def close(self):
         """Close the UDP socket. Called on unload."""
         if self.light_socket is not None:

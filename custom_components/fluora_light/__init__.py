@@ -5,10 +5,6 @@ from homeassistant.core import HomeAssistant, Event
 from .coordinator import LightCoordinator
 
 from .const import *
-import logging
-
-LOGGER = logging.getLogger(__name__)
-PLATFORMS = ["light"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up from a config entry."""
