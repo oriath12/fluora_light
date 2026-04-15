@@ -5,7 +5,8 @@ import socket
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
-    ATTR_EFFECT
+    ATTR_EFFECT,
+    ATTR_HS_COLOR,
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -31,6 +32,8 @@ class LightState(StrEnum):
     POWER = "power"
     """set the effect"""
     EFFECT = ATTR_EFFECT
+    """(hue °, saturation %) tuple – HA convention"""
+    HS_COLOR = ATTR_HS_COLOR
 
 
 class LightCoordinator(DataUpdateCoordinator):
@@ -68,6 +71,8 @@ class LightCoordinator(DataUpdateCoordinator):
         self.data[LightState.BRIGHTNESS] = 255
         self.data[LightState.POWER] = True
         self.data[LightState.EFFECT] = EFFECT_AUTO
+        # Default colour: red (0 °), fully saturated
+        self.data[LightState.HS_COLOR] = (0.0, 100.0)
 
     def _set_poll_mode(self, fast: bool):
         self._fast_poll_count = 0 if fast else -1
@@ -193,6 +198,16 @@ class LightCoordinator(DataUpdateCoordinator):
                 await asyncio.sleep(0.1)
                 await self._send_hex(SCENE_HEX_DICT[value])
                 LOGGER.info(f"Setting color: {value}")
+        elif key == LightState.HS_COLOR:
+            hue, saturation = value
+            await self._send_hex(MANUAL_HEX)
+            await asyncio.sleep(0.1)
+            await self._send_hex(build_hue_command(hue))
+            await asyncio.sleep(0.1)
+            await self._send_hex(build_saturation_command(saturation))
+            # Clear any scene/mode effect so the UI reflects colour mode
+            self.state[LightState.EFFECT] = None
+            LOGGER.info("Setting HS colour: hue=%.1f°, saturation=%.1f%%", hue, saturation)
         elif key == LightState.POWER:
             if value:
                 await self._send_hex(POWER_ON_HEX)

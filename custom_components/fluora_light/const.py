@@ -1,5 +1,6 @@
 from homeassistant.const import Platform
 import logging
+import struct
 
 LOGGER = logging.getLogger(__package__)
 
@@ -67,7 +68,35 @@ EFFECT_AWAKEN = "Awaken"
 COLOR_EFFECTS = [EFFECT_RED, EFFECT_GREEN, EFFECT_BLUE, EFFECT_YELLOW, EFFECT_ORANGE, EFFECT_PURPLE]
 SCENE_EFFECTS = [EFFECT_PARTY, EFFECT_CHILL, EFFECT_FOCUS, EFFECT_BEDTIME, EFFECT_AWAKEN]
 
-EFFECT_LIST = COLOR_EFFECTS + SCENE_EFFECTS + [EFFECT_AUTO, EFFECT_WHITE]
+# Scene/mode effects exposed in the effect list.
+# Solid colors and White are now handled by the HS color wheel instead.
+EFFECT_LIST = SCENE_EFFECTS + [EFFECT_AUTO]
+
+# ---------------------------------------------------------------------------
+# OSC command prefixes for continuous hue / saturation control
+# ---------------------------------------------------------------------------
+
+# Extracted from CONTROL_HEX_DICT – each is a 20-byte OSC address + type-tag
+_HUE_PREFIX = "2f5468576e787336356c30736a0000002c666900"
+_SAT_PREFIX = "2f7936383755345a67796d736a0000002c666900"
+
+# Device saturation bounds (IEEE 754 big-endian floats)
+_SAT_MIN = 0.0078125  # 0x3C000000 – effectively white / no colour
+_SAT_MAX = struct.unpack(">f", bytes.fromhex("3f7f7a00"))[0]  # ≈ 0.998
+
+
+def build_hue_command(hue: float) -> str:
+    """Return OSC hex command string for *hue* (0–360 degrees, HA convention)."""
+    # The device colour wheel starts at yellow (≈60 °) and increases around
+    # the standard hue circle, wrapping back at 360 °.
+    device_float = ((hue - 60.0) % 360.0) / 360.0
+    return _HUE_PREFIX + struct.pack(">f", device_float).hex() + "00000000"
+
+
+def build_saturation_command(saturation: float) -> str:
+    """Return OSC hex command string for *saturation* (0–100, HA convention)."""
+    device_float = _SAT_MIN + (saturation / 100.0) * (_SAT_MAX - _SAT_MIN)
+    return _SAT_PREFIX + struct.pack(">f", device_float).hex() + "00000000"
 
 AUTO_HEX = "2f697761614d6b567a4f66554d0000002c6969000000000000000000"
 SCENE_HEX = "2f697761614d6b567a4f66554d0000002c6969000000000100000000"
