@@ -1,7 +1,9 @@
 import asyncio
 import datetime as dt
 from enum import StrEnum
+import json
 import socket
+import struct
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
@@ -23,6 +25,50 @@ def calculate_brightness_hex(desired_brightness):
     # and yield an out-of-range hex command).
     desired_brightness = max(1, min(100, desired_brightness))
     return scale_number((desired_brightness ** 0.1) - 1, 0, 100 ** 0.1 - 1, 3932160, 4160442)
+
+
+def _parse_osc_packet(data: bytes) -> tuple[str, str, list]:
+    """Minimal OSC 1.0 parser.  Returns (address, type_tag, args).
+
+    Only handles types f (float32), i (int32), s (string), b (blob).
+    Unknown types stop argument parsing early.
+    """
+    offset = 0
+
+    # --- Address string (null-terminated, padded to 4-byte boundary) ---
+    end = data.index(b"\x00", offset)
+    address = data[offset:end].decode("ascii", errors="replace")
+    offset = (end + 4) & ~3
+
+    # --- Type-tag string (starts with ',') ---
+    if offset >= len(data) or data[offset:offset + 1] != b",":
+        return address, "", []
+    end = data.index(b"\x00", offset)
+    type_tag = data[offset:end].decode("ascii", errors="replace")
+    offset = (end + 4) & ~3
+
+    # --- Arguments ---
+    args: list = []
+    for t in type_tag[1:]:          # skip leading ','
+        if t == "f":
+            args.append(struct.unpack(">f", data[offset:offset + 4])[0])
+            offset += 4
+        elif t == "i":
+            args.append(struct.unpack(">i", data[offset:offset + 4])[0])
+            offset += 4
+        elif t == "s":
+            end = data.index(b"\x00", offset)
+            args.append(data[offset:end].decode("utf-8", errors="replace"))
+            offset = (end + 4) & ~3
+        elif t == "b":
+            size = struct.unpack(">i", data[offset:offset + 4])[0]
+            offset += 4
+            args.append(data[offset:offset + size])
+            offset = (offset + size + 3) & ~3
+        else:
+            break  # unknown type, stop
+
+    return address, type_tag, args
 
 
 class LightState(StrEnum):
@@ -65,6 +111,11 @@ class LightCoordinator(DataUpdateCoordinator):
         self.ip_address = "0.0.0.0"
         self.light_socket = None
 
+        # Background receive task and config-discovery state
+        self._receive_task: asyncio.Task | None = None
+        self._config_buffer: str = ""
+        self.discovered_routes: dict[str, str] = {}
+
         # Initialize state in case of new integration
         self.data = dict()
         # init to 255 since that's HA's representation of it
@@ -87,7 +138,11 @@ class LightCoordinator(DataUpdateCoordinator):
                 self._set_poll_mode(fast=False)
 
     def close(self):
-        """Close the UDP socket. Called on unload."""
+        """Cancel the receive loop and close the UDP socket. Called on unload."""
+        if self._receive_task is not None and not self._receive_task.done():
+            self._receive_task.cancel()
+        self._receive_task = None
+
         if self.light_socket is not None:
             try:
                 self.light_socket.close()
@@ -118,6 +173,104 @@ class LightCoordinator(DataUpdateCoordinator):
             self.light_socket.send, bytearray.fromhex(hex_str)
         )
 
+    # ------------------------------------------------------------------
+    # Config-discovery: receive loop + OSC parsing
+    # ------------------------------------------------------------------
+
+    def _recv_blocking(self) -> bytes | None:
+        """Blocking UDP recv — runs in executor.  Returns None on timeout/error."""
+        try:
+            return self.light_socket.recv(65535)
+        except (socket.timeout, OSError):
+            return None
+
+    async def _receive_loop(self) -> None:
+        """Background task: receive UDP packets from the device and parse them.
+
+        All received OSC messages are logged at INFO level so that running
+        ``grep fluora_light home-assistant.log`` after a Wireshark session
+        gives the user a second source of truth for route discovery.
+        """
+        LOGGER.debug("Receive loop started for %s", self.hostname)
+        while True:
+            try:
+                data = await self.hass.async_add_executor_job(self._recv_blocking)
+                if data:
+                    self._handle_received_packet(data)
+            except asyncio.CancelledError:
+                LOGGER.debug("Receive loop cancelled for %s", self.hostname)
+                break
+            except Exception as exc:
+                LOGGER.debug("Receive loop error for %s: %s", self.hostname, exc)
+                await asyncio.sleep(0.5)
+
+    def _handle_received_packet(self, data: bytes) -> None:
+        """Parse an incoming packet, log it, and collect config fragments."""
+        try:
+            address, type_tag, args = _parse_osc_packet(data)
+        except Exception as exc:
+            LOGGER.debug(
+                "Unparseable packet from %s (%d bytes): %s  raw=%s",
+                self.hostname, len(data), exc, data.hex(),
+            )
+            return
+
+        LOGGER.info(
+            "← OSC from %s  addr=%s  types=%s  args=%s",
+            self.hostname, address, type_tag, args,
+        )
+
+        # Collect string args that look like JSON config fragments
+        for arg in args:
+            if isinstance(arg, str) and len(arg) > 10:
+                self._accumulate_config(arg)
+
+    def _accumulate_config(self, fragment: str) -> None:
+        """Append a string fragment and try to parse the buffer as JSON."""
+        self._config_buffer += fragment
+        try:
+            config = json.loads(self._config_buffer)
+        except json.JSONDecodeError:
+            return  # still incomplete
+
+        LOGGER.info(
+            "✓ Full device config received from %s:\n%s",
+            self.hostname,
+            json.dumps(config, indent=2),
+        )
+        self.discovered_routes = {}
+        self._extract_routes(config, self.discovered_routes)
+        LOGGER.info(
+            "Discovered %d OSC routes from %s:",
+            len(self.discovered_routes), self.hostname,
+        )
+        for label, route in self.discovered_routes.items():
+            LOGGER.info("  %-30s → %s", label, route)
+
+        self._config_buffer = ""  # reset for potential future updates
+
+    def _extract_routes(self, obj: object, routes: dict, path: str = "") -> None:
+        """Recursively walk the config tree and collect label→route pairs."""
+        if isinstance(obj, dict):
+            if "route" in obj and "label" in obj:
+                routes[obj["label"]] = obj["route"]
+            for key, val in obj.items():
+                self._extract_routes(val, routes, f"{path}.{key}")
+        elif isinstance(obj, list):
+            for i, item in enumerate(obj):
+                self._extract_routes(item, routes, f"{path}[{i}]")
+
+    async def _probe_device_config(self) -> None:
+        """Send no-argument OSC probes to try to elicit a config-tree response."""
+        LOGGER.info("Probing %s for config tree (addresses: %s)…",
+                    self.hostname, CONFIG_PROBE_ADDRESSES)
+        for addr in CONFIG_PROBE_ADDRESSES:
+            try:
+                await self._send_hex(build_osc_probe(addr))
+                await asyncio.sleep(0.3)
+            except Exception as exc:
+                LOGGER.debug("Probe %s failed: %s", addr, exc)
+
     async def _initialize(self):
         # Guard against concurrent initialization (scheduled refresh +
         # user action can both call this).
@@ -136,6 +289,14 @@ class LightCoordinator(DataUpdateCoordinator):
                 LOGGER.info(
                     "async_update_state: %s - %s", LightState.EFFECT, EFFECT_AUTO
                 )
+
+                # Start background receive loop so we capture any device responses
+                self._receive_task = self.hass.async_create_task(
+                    self._receive_loop()
+                )
+
+                # Probe for the config tree; response (if any) comes via receive loop
+                await self._probe_device_config()
 
                 self._set_poll_mode(fast=True)
             except Exception as e:

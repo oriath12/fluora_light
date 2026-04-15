@@ -98,6 +98,27 @@ def build_saturation_command(saturation: float) -> str:
     device_float = _SAT_MIN + (saturation / 100.0) * (_SAT_MAX - _SAT_MIN)
     return _SAT_PREFIX + struct.pack(">f", device_float).hex() + "00000000"
 
+
+# ---------------------------------------------------------------------------
+# Config-discovery probing
+# ---------------------------------------------------------------------------
+
+# OSC addresses to probe on startup in hopes of getting the device config tree.
+# The device's app downloads a JSON "route tree" on startup; we send these to
+# try to trigger the same response.
+CONFIG_PROBE_ADDRESSES = ["/getState", "/config", "/state"]
+
+
+def build_osc_probe(address: str) -> str:
+    """Build a no-argument OSC message (just address + empty type tag).
+
+    Used to probe the device for a response without sending meaningful data.
+    """
+    addr_bytes = address.encode("ascii") + b"\x00"
+    while len(addr_bytes) % 4:
+        addr_bytes += b"\x00"
+    return (addr_bytes + b",\x00\x00\x00").hex()
+
 AUTO_HEX = "2f697761614d6b567a4f66554d0000002c6969000000000000000000"
 SCENE_HEX = "2f697761614d6b567a4f66554d0000002c6969000000000100000000"
 MANUAL_HEX = "2f697761614d6b567a4f66554d0000002c6969000000000200000000"
