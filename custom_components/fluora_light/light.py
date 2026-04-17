@@ -50,9 +50,9 @@ class FluoraLightEntity(FluoraLightBaseEntity, LightEntity):
 
     @property
     def color_mode(self) -> ColorMode:
-        """Return HS when a user colour is active, BRIGHTNESS during scenes/auto."""
+        """Return HS when a user colour is active, BRIGHTNESS during scenes/auto/rainbow."""
         effect = self.coordinator.state.get(LightState.EFFECT)
-        if effect in SCENE_EFFECTS or effect == EFFECT_AUTO:
+        if effect in SCENE_EFFECTS or effect in (EFFECT_AUTO, EFFECT_RAINBOW):
             return ColorMode.BRIGHTNESS
         return ColorMode.HS
 
