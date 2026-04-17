@@ -64,6 +64,7 @@ class LightCoordinator(DataUpdateCoordinator):
         )
         self.ip_address = "0.0.0.0"
         self.light_socket = None
+        self._rainbow_task: asyncio.Task | None = None
 
         # Initialize state in case of new integration
         self.data = dict()
@@ -88,6 +89,9 @@ class LightCoordinator(DataUpdateCoordinator):
 
     def close(self):
         """Close the UDP socket. Called on unload."""
+        if self._rainbow_task is not None and not self._rainbow_task.done():
+            self._rainbow_task.cancel()
+        self._rainbow_task = None
         if self.light_socket is not None:
             try:
                 self.light_socket.close()
@@ -154,6 +158,42 @@ class LightCoordinator(DataUpdateCoordinator):
     def state(self) -> dict:
         return self.data
 
+    async def _stop_rainbow(self) -> None:
+        """Cancel any running rainbow task and wait for it to finish."""
+        task = self._rainbow_task
+        if task is None:
+            return
+        self._rainbow_task = None
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    async def _rainbow_loop(self) -> None:
+        """Cycle through pride flag hues indefinitely until cancelled."""
+        try:
+            await self._send_hex(MANUAL_HEX)
+            await asyncio.sleep(0.1)
+            idx = 0
+            while True:
+                hue = PRIDE_HUE_SEQUENCE[idx % len(PRIDE_HUE_SEQUENCE)]
+                await self._send_hex(build_saturation_command(20.0))
+                await asyncio.sleep(RAINBOW_FLASH_DURATION)
+                await self._send_hex(build_saturation_command(100.0))
+                await asyncio.sleep(0.05)
+                await self._send_hex(build_hue_command(hue))
+                self.data[LightState.HS_COLOR] = (hue, 100.0)
+                await asyncio.sleep(
+                    max(0.0, RAINBOW_STEP_INTERVAL - RAINBOW_FLASH_DURATION - 0.05)
+                )
+                idx += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning("Rainbow loop terminated unexpectedly: %s", exc)
+
     async def async_update_state(self, key: LightState, value) -> bool:
         return await self._async_update_state(key, value)
 
@@ -165,6 +205,11 @@ class LightCoordinator(DataUpdateCoordinator):
             # initialization failed; nothing to send.
             return False
 
+        # Stop any running rainbow animation unless this is a brightness
+        # adjustment (which layers cleanly on top) or a repeat rainbow selection.
+        if not (key == LightState.BRIGHTNESS or (key == LightState.EFFECT and value == EFFECT_RAINBOW)):
+            await self._stop_rainbow()
+
         # Write data back
         if key == LightState.BRIGHTNESS:
             # convert brightness from HA's 0-255 interpretation to our 0-100
@@ -174,8 +219,15 @@ class LightCoordinator(DataUpdateCoordinator):
             LOGGER.info(f"Setting Brightness {desired_brightness}")
         # compiled all color, scene, and mode changing into the EFFECT to make it easier
         elif key == LightState.EFFECT:
+            if value == EFFECT_RAINBOW:
+                if self._rainbow_task is None or self._rainbow_task.done():
+                    self._rainbow_task = self.hass.loop.create_task(
+                        self._rainbow_loop(),
+                        name=f"fluora_rainbow_{self.device_id}",
+                    )
+                LOGGER.info("Starting Rainbow effect")
             # check if it is a scene effect. If so, set the mode to scene and then set the specific scene
-            if value in SCENE_EFFECTS:
+            elif value in SCENE_EFFECTS:
                 await self._send_hex(SCENE_HEX)
                 await asyncio.sleep(0.1)
                 await self._send_hex(SCENE_HEX_DICT[value])

@@ -64,13 +64,14 @@ EFFECT_CHILL = "Chill"
 EFFECT_FOCUS = "Focus"
 EFFECT_BEDTIME = "Bedtime"
 EFFECT_AWAKEN = "Awaken"
+EFFECT_RAINBOW = "Rainbow"
 
 COLOR_EFFECTS = [EFFECT_RED, EFFECT_GREEN, EFFECT_BLUE, EFFECT_YELLOW, EFFECT_ORANGE, EFFECT_PURPLE]
 SCENE_EFFECTS = [EFFECT_PARTY, EFFECT_CHILL, EFFECT_FOCUS, EFFECT_BEDTIME, EFFECT_AWAKEN]
 
 # Scene/mode effects exposed in the effect list.
 # Solid colors and White are now handled by the HS color wheel instead.
-EFFECT_LIST = SCENE_EFFECTS + [EFFECT_AUTO]
+EFFECT_LIST = SCENE_EFFECTS + [EFFECT_RAINBOW, EFFECT_AUTO]
 
 # ---------------------------------------------------------------------------
 # OSC command prefixes for continuous hue / saturation control
@@ -117,6 +118,11 @@ YELLOW_HEX = "2f5468576e787336356c30736a0000002c666900360b670000000000"
 
 MIN_SATURATION_HEX = "2f7936383755345a67796d736a0000002c666900" + hex(3932160)[2:] + "0000000000"
 MAX_SATURATION_HEX = "2f7936383755345a67796d736a0000002c666900" + hex(4160442)[2:] + "0000000000"
+
+# Pride flag hue sequence (HA convention: 0–360°): red, orange, yellow, green, blue, violet
+PRIDE_HUE_SEQUENCE = (0.0, 30.0, 60.0, 120.0, 240.0, 270.0)
+RAINBOW_STEP_INTERVAL = 0.8   # seconds per color
+RAINBOW_FLASH_DURATION = 0.08  # brief desat dip between colors
 
 SCENE_HEX_DICT = {EFFECT_PARTY: PARTY_HEX,
                   EFFECT_CHILL: CHILL_HEX,
