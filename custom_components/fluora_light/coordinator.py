@@ -64,7 +64,7 @@ class LightCoordinator(DataUpdateCoordinator):
         )
         self.ip_address = "0.0.0.0"
         self.light_socket = None
-        self._rainbow_task: asyncio.Task | None = None
+        self._rainbow_task = None
 
         # Initialize state in case of new integration
         self.data = dict()
@@ -221,7 +221,7 @@ class LightCoordinator(DataUpdateCoordinator):
         elif key == LightState.EFFECT:
             if value == EFFECT_RAINBOW:
                 if self._rainbow_task is None or self._rainbow_task.done():
-                    self._rainbow_task = self.hass.loop.create_task(
+                    self._rainbow_task = self.hass.async_create_background_task(
                         self._rainbow_loop(),
                         name=f"fluora_rainbow_{self.device_id}",
                     )
