@@ -19,7 +19,6 @@ from .const import *
 
 light_description = LightEntityDescription(
     key="light",
-    name="Light",
 )
 
 async def async_setup_entry(
@@ -75,10 +74,13 @@ class FluoraLightEntity(FluoraLightBaseEntity, LightEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """turn on"""
-        if not self.is_on:
-            self.coordinator.state[LightState.POWER] = True
-            self.async_write_ha_state()
-            await self.coordinator.async_update_state(LightState.POWER, True)
+        # Always send POWER_ON — the device is fire-and-forget UDP so a
+        # redundant "on" is harmless, and skipping it when we *think*
+        # the light is already on causes the first toggle after HA
+        # restart to be a silent no-op (coordinator defaults POWER=True).
+        self.coordinator.state[LightState.POWER] = True
+        self.async_write_ha_state()
+        await self.coordinator.async_update_state(LightState.POWER, True)
 
         if ATTR_HS_COLOR in kwargs:
             await self.coordinator.async_update_state(
